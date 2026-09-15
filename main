@@ -5,6 +5,7 @@ import logging
 import sys
 import traceback
 import datetime
+import pytz
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
 logging.basicConfig(
@@ -66,15 +67,16 @@ EMOJI_URGENT = "5350330821796465276"
 EMOJI_SEP = "5974089587914446979"
 EMOJI_NIGHT = "6046428493720327616"
 
-# ========== НАСТРОЙКИ РАБОЧЕГО ВРЕМЕНИ ==========
+# ========== НАСТРОЙКИ РАБОЧЕГО ВРЕМЕНИ (МСК) ==========
 WORK_START_HOUR = 8
 WORK_END_HOUR = 23
+MSK_TZ = pytz.timezone('Europe/Moscow')
 
 logger.info("=" * 70)
 logger.info("🚀 БОТ ЗАПУЩЕН")
 logger.info(f"📸 ФОТО: {PHOTO_URL}")
 logger.info(f"👤 ВЛАДЕЛЕЦ: {OWNER_ID}")
-logger.info(f"🕐 Рабочее время: {WORK_START_HOUR}:00 - {WORK_END_HOUR}:00")
+logger.info(f"🕐 Рабочее время (МСК): {WORK_START_HOUR}:00 - {WORK_END_HOUR}:00")
 logger.info("=" * 70)
 
 # ========== ХРАНИЛИЩЕ ==========
@@ -84,17 +86,24 @@ user_orders = {}
 
 # ========== ФУНКЦИИ РАБОЧЕГО ВРЕМЕНИ ==========
 
+def get_msk_time():
+    """Получить текущее время по Москве"""
+    return datetime.datetime.now(MSK_TZ)
+
 def is_working_time():
-    """Проверка рабочего времени"""
-    now = datetime.datetime.now()
-    return WORK_START_HOUR <= now.hour < WORK_END_HOUR
+    """Проверка рабочего времени по МСК"""
+    now = get_msk_time()
+    current_hour = now.hour
+    working = WORK_START_HOUR <= current_hour < WORK_END_HOUR
+    logger.info(f"🕐 Время МСК: {now.strftime('%H:%M:%S')} | Рабочее: {working}")
+    return working
 
 def get_closed_message():
     """Сообщение когда бот закрыт"""
     return (
         f'<tg-emoji emoji-id="{EMOJI_CLOSED}">🔒</tg-emoji> <b>Здравствуйте, бот в данное время не сможет принимать покупки</b> '
         f'<tg-emoji emoji-id="{EMOJI_TIME_WORK}">⏰</tg-emoji>\n\n'
-        f'<tg-emoji emoji-id="{EMOJI_CLOCK}">🕐</tg-emoji> <b>Рабочее время: с 08:00 - 23:00</b> '
+        f'<tg-emoji emoji-id="{EMOJI_CLOCK}">🕐</tg-emoji> <b>Рабочее время: с 08:00 - 23:00 (МСК)</b> '
         f'<tg-emoji emoji-id="{EMOJI_WORK}">⏳</tg-emoji>\n\n\n'
         f'Если у вас срочная покупка, напишите\n'
         f'<tg-emoji emoji-id="{EMOJI_URGENT}">📩</tg-emoji> <b>@M_K_B_59</b> '
@@ -153,8 +162,6 @@ def delete_message(chat_id, message_id):
         result = response.json()
         if result.get("ok"):
             logger.debug(f"✅ Сообщение {message_id} удалено")
-        else:
-            logger.error(f"❌ Ошибка delete_message: {result}")
         return result
     except Exception as e:
         logger.error(f"💥 Ошибка delete_message: {e}")
@@ -172,12 +179,9 @@ def answer_callback(callback_id, text=None, show_alert=False):
         result = response.json()
         if result.get("ok"):
             logger.debug(f"✅ answer_callback {callback_id}")
-        else:
-            logger.error(f"❌ Ошибка answer_callback: {result}")
         return result
     except Exception as e:
         logger.error(f"💥 Ошибка answer_callback: {e}")
-        logger.error(traceback.format_exc())
         return {"ok": False, "error": str(e)}
 
 def get_username(chat_id):
@@ -193,7 +197,7 @@ def get_username(chat_id):
             return user.get("first_name", "Пользователь")
         return "Пользователь"
     except Exception as e:
-        logger.error(f"💥 Ошибка get_username для {chat_id}: {e}")
+        logger.error(f"💥 Ошибка get_username: {e}")
         return "Пользователь"
 
 def get_full_name(chat_id):
@@ -320,33 +324,15 @@ def after_payment_menu():
 # ========== ЦЕНЫ ==========
 
 UC_PRICES = {
-    "60": 83,
-    "120": 175,
-    "180": 265,
-    "240": 360,
-    "325": 446,
-    "385": 549,
-    "445": 625,
-    "660": 869,
-    "720": 957,
-    "985": 1290,
-    "1045": 1400,
-    "1800": 2119,
-    "3850": 4200
+    "60": 83, "120": 175, "180": 265, "240": 360, "325": 446,
+    "385": 549, "445": 625, "660": 869, "720": 957, "985": 1290,
+    "1045": 1400, "1800": 2119, "3850": 4200
 }
 
 POP_PRICES = {
-    "10000": 176,
-    "20000": 307,
-    "30000": 439,
-    "40000": 578,
-    "50000": 715,
-    "60000": 857,
-    "70000": 989,
-    "100000": 1375,
-    "150000": 1994,
-    "200000": 2612,
-    "500000": 6272
+    "10000": 176, "20000": 307, "30000": 439, "40000": 578,
+    "50000": 715, "60000": 857, "70000": 989, "100000": 1375,
+    "150000": 1994, "200000": 2612, "500000": 6272
 }
 
 def get_cart_total(cart, prices):
@@ -382,16 +368,16 @@ def handle_update(update):
             logger.info(f"💬 Сообщение от {chat_id}: {text}")
             
             if text == "/start":
+                # Удаляем предыдущее сообщение
+                if user_data[user_id].get("last_message_id"):
+                    delete_message(chat_id, user_data[user_id]["last_message_id"])
+                
+                # ПРОВЕРКА РАБОЧЕГО ВРЕМЕНИ
                 if not is_working_time():
-                    if user_data[user_id].get("last_message_id"):
-                        delete_message(chat_id, user_data[user_id]["last_message_id"])
                     result = send_message(chat_id, get_closed_message())
                     if result.get("ok"):
                         user_data[user_id]["last_message_id"] = result.get("result", {}).get("message_id")
                     return
-                
-                if user_data[user_id].get("last_message_id"):
-                    delete_message(chat_id, user_data[user_id]["last_message_id"])
                 
                 try:
                     result = send_photo(chat_id, PHOTO_URL, caption=MAIN_MENU_TEXT, reply_markup=main_menu())
@@ -441,12 +427,8 @@ def handle_update(update):
                     if user_id not in user_orders:
                         user_orders[user_id] = []
                     user_orders[user_id].append({
-                        "id": order_id,
-                        "item_name": item_name,
-                        "status": "pending",
-                        "price": price,
-                        "pubg_id": pubg_id,
-                        "order_type": order_type,
+                        "id": order_id, "item_name": item_name, "status": "pending",
+                        "price": price, "pubg_id": pubg_id, "order_type": order_type,
                         "created_at": datetime.datetime.now().isoformat()
                     })
                     
@@ -495,12 +477,20 @@ def handle_update(update):
             if user_id not in user_data:
                 user_data[user_id] = {"uc_cart": {}, "pop_cart": {}, "step": "main", "temp": {}, "last_message_id": None}
             
+            # Удаляем предыдущее сообщение
             if user_data[user_id].get("last_message_id"):
                 delete_message(chat_id, user_data[user_id]["last_message_id"])
                 user_data[user_id]["last_message_id"] = None
             
-            # ---- ПРОВЕРКА РАБОЧЕГО ВРЕМЕНИ ----
-            if not is_working_time() and not data.startswith(("confirm_payment_", "reject_payment_", "order_done_", "order_cancel_")):
+            # ПРОВЕРКА РАБОЧЕГО ВРЕМЕНИ (кроме действий владельца)
+            is_owner_action = (
+                data.startswith("confirm_payment_") or
+                data.startswith("reject_payment_") or
+                data.startswith("order_done_") or
+                data.startswith("order_cancel_")
+            )
+            
+            if not is_working_time() and not is_owner_action:
                 result = send_message(chat_id, get_closed_message())
                 if result.get("ok"):
                     user_data[user_id]["last_message_id"] = result.get("result", {}).get("message_id")
@@ -674,14 +664,9 @@ def handle_update(update):
                 order_id = f"{chat_id}_{int(time.time())}"
                 
                 orders[order_id] = {
-                    "user_id": chat_id,
-                    "cart": cart,
-                    "total_uc": total_uc,
-                    "total_pop": total_pop,
-                    "price": price,
-                    "order_type": order_type,
-                    "username": username,
-                    "full_name": full_name,
+                    "user_id": chat_id, "cart": cart, "total_uc": total_uc,
+                    "total_pop": total_pop, "price": price, "order_type": order_type,
+                    "username": username, "full_name": full_name,
                     "status": "waiting_confirmation",
                     "created_at": datetime.datetime.now().isoformat()
                 }
@@ -889,7 +874,7 @@ def main():
     logger.info("=" * 70)
     logger.info("🚀 БОТ ЗАПУЩЕН")
     logger.info(f"📸 ФОТО: {PHOTO_URL}")
-    logger.info(f"🕐 Рабочее время: {WORK_START_HOUR}:00 - {WORK_END_HOUR}:00")
+    logger.info(f"🕐 Рабочее время (МСК): {WORK_START_HOUR}:00 - {WORK_END_HOUR}:00")
     logger.info("=" * 70)
     
     while True:
